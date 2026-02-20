@@ -4,6 +4,7 @@ from transformers import pipeline
 import torchaudio
 import tempfile
 import os
+import torch
 
 app = FastAPI()
 
@@ -34,16 +35,35 @@ async def listen(file: UploadFile = File(...)):
         # Load waveform with torchaudio (ffmpeg not needed)
         waveform, sample_rate = torchaudio.load(tmp_path)
 
-        # Transcribe using Hugging Face pipeline
-        result = asr({
-            "array": waveform.squeeze().numpy(),
-            "sampling_rate": sample_rate
-        })
+        # ✅ Convert to mono if stereo
+        if waveform.shape[0] > 1:
+            waveform = torch.mean(waveform, dim=0, keepdim=True)
+
+        # ✅ Resample to 16k if needed
+        if sample_rate != 16000:
+            resampler = torchaudio.transforms.Resample(
+                orig_freq=sample_rate,
+                new_freq=16000
+            )
+            waveform = resampler(waveform)
+            sample_rate = 16000
+
+        result = asr(
+            {
+                "array": waveform.squeeze().numpy(),
+                "sampling_rate": sample_rate
+            },
+            return_timestamps=True   # required for >30s
+        )
 
         # Clean up temp file
         os.remove(tmp_path)
 
-        return {"text": result["text"]}
+        return {
+            "text": result["text"],
+            "timestamps": result.get("chunks", [])
+        }
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+        
