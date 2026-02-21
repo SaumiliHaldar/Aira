@@ -1,69 +1,116 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
-from transformers import pipeline
+from faster_whisper import WhisperModel
+from llama_cpp import Llama
 import torchaudio
 import tempfile
 import os
 import torch
+import numpy as np
 
 app = FastAPI()
+
+# --- INITIALIZATION ---
+
+# Load Whisper Model (CPU Optimized)
+# tiny.en is recommended for speed on CPU
+whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+
+# Load LLM (Qwen2-1.5B GGUF)
+# Note: Ensure the model file exists or add download logic
+MODEL_PATH = os.path.join("models", "qwen2-1_5b-instruct-q4.gguf")
+# Initialize LLM only if file exists, to avoid startup failure
+llm = None
+if os.path.exists(MODEL_PATH):
+    llm = Llama(model_path=MODEL_PATH, n_ctx=2048, n_threads=8)
+else:
+    print(f"WARNING: LLM model not found at {MODEL_PATH}. Chat features will be limited.")
+
+# --- UTILITIES ---
+
+def detect_intent(text: str) -> str:
+    """Rule-based intent classifier."""
+    text = text.lower()
+    
+    # OS / System commands
+    system_words = ["shutdown", "restart", "open", "close", "launch", "exit"]
+    if any(word in text for word in system_words):
+        return "system_command"
+    
+    # Simple greetings or very short chat
+    if len(text.split()) < 4:
+        return "fast_chat"
+    
+    return "smart_llm"
+
+def run_llm(prompt: str, max_tokens: int = 150) -> str:
+    """Helper to run the local LLM."""
+    if not llm:
+        return "I'm sorry, my brain (LLM) is currently offline. Please check the model file."
+    
+    output = llm(
+        f"<|im_start|>system\nYou are AIRA, a helpful and intelligent AI assistant. Keep your responses concise and natural.<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n",
+        max_tokens=max_tokens,
+        stop=["<|im_end|>", "</s>"],
+        echo=False
+    )
+    return output["choices"][0]["text"].strip()
+
+def route_engine(text: str):
+    """Router Engine that directs traffic to specialized executors."""
+    intent = detect_intent(text)
+    
+    if intent == "system_command":
+        # Placeholder for real Command Executor logic
+        return {"response": f"Acknowledged. Executing system command for: '{text}'", "type": "command"}
+    
+    elif intent == "fast_chat":
+        # Faster response for simple queries
+        response = run_llm(f"Reply briefly to: {text}", max_tokens=50)
+        return {"response": response, "type": "fast_chat"}
+    
+    else:
+        # Detailed thinking for complex queries
+        response = run_llm(text, max_tokens=300)
+        return {"response": response, "type": "smart_llm"}
+
+# --- ENDPOINTS ---
 
 # Root and Health Check
 @app.get("/")
 def root():
-    return {"message": "Voia is LIVE!🚀"}
+    return {"message": "AIRA is LIVE! 🚀"}
 
 @app.get("/healthz")
 async def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "llm_loaded": llm is not None}
 
-
-# Initialize Hugging Face pipeline
-asr = pipeline("automatic-speech-recognition", model="openai/whisper-tiny.en")
-# asr = pipeline("automatic-speech-recognition", model="openai/whisper-medium.en")
-
-
-# Voice to Text (Listen)
 @app.post("/listen")
 async def listen(file: UploadFile = File(...)):
     try:
-        # Save the uploaded audio to a temp file
+        # 1. Speech-to-Text (ASR)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
 
-        # Load waveform with torchaudio (ffmpeg not needed)
-        waveform, sample_rate = torchaudio.load(tmp_path)
-
-        # ✅ Convert to mono if stereo
-        if waveform.shape[0] > 1:
-            waveform = torch.mean(waveform, dim=0, keepdim=True)
-
-        # ✅ Resample to 16k if needed
-        if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(
-                orig_freq=sample_rate,
-                new_freq=16000
-            )
-            waveform = resampler(waveform)
-            sample_rate = 16000
-
-        result = asr(
-            {
-                "array": waveform.squeeze().numpy(),
-                "sampling_rate": sample_rate
-            },
-            return_timestamps=True   # required for >30s
-        )
-
-        # Clean up temp file
+        # Transcribe using faster-whisper
+        segments, info = whisper_model.transcribe(tmp_path, beam_size=5)
+        text = " ".join([segment.text for segment in segments]).strip()
+        
         os.remove(tmp_path)
 
+        if not text:
+            return {"error": "No speech detected"}
+
+        # 2. Intelligence Flow (Classifier -> Router)
+        result = route_engine(text)
+
         return {
-            "text": result["text"],
-            "timestamps": result.get("chunks", [])
+            "input_text": text,
+            "response": result["response"],
+            "type": result["type"],
+            "language": info.language
         }
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-        
