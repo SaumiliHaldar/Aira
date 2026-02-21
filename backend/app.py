@@ -7,17 +7,22 @@ import tempfile
 import os
 import torch
 import numpy as np
+import threading
+from download_model import check_model
+from wakeword import run_wakeword
 
 app = FastAPI()
 
 # --- INITIALIZATION ---
+
+# Ensure model is downloaded before initializing LLM
+check_model()
 
 # Load Whisper Model (CPU Optimized)
 # tiny.en is recommended for speed on CPU
 whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
 
 # Load LLM (Qwen2-1.5B GGUF)
-# Note: Ensure the model file exists or add download logic
 MODEL_PATH = os.path.join("models", "qwen2-1_5b-instruct-q4.gguf")
 # Initialize LLM only if file exists, to avoid startup failure
 llm = None
@@ -25,6 +30,14 @@ if os.path.exists(MODEL_PATH):
     llm = Llama(model_path=MODEL_PATH, n_ctx=2048, n_threads=8)
 else:
     print(f"WARNING: LLM model not found at {MODEL_PATH}. Chat features will be limited.")
+
+# --- BACKGROUND TASKS ---
+
+@app.on_event("startup")
+async def startup_event():
+    # Start Wake Word Listener in a background thread
+    print("Starting Wake Word Listener in background...")
+    threading.Thread(target=run_wakeword, daemon=True).start()
 
 # --- UTILITIES ---
 

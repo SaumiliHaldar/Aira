@@ -10,21 +10,46 @@ CHANNELS = 1
 RATE = 16000
 CHUNK_SIZE = 1280 # Required for openwakeword
 
-def listen_for_wake_word(threshold=0.5):
+def get_input_device():
+    """Finds a valid input device, prioritizing microphones."""
+    devices = sd.query_devices()
+    default_input = sd.default.device[0]
+    
+    # Priority 1: Check if default is valid
+    if default_input != -1:
+        return default_input
+        
+    # Priority 2: Look for 'mic' or 'microphone'
+    for i, dev in enumerate(devices):
+        if dev['max_input_channels'] > 0 and 'mic' in dev['name'].lower():
+            print(f"Using preferred microphone: {dev['name']} (ID: {i})")
+            return i
+
+    # Priority 3: Fallback to any input device
+    for i, dev in enumerate(devices):
+        if dev['max_input_channels'] > 0:
+            print(f"Using fallback input device: {dev['name']} (ID: {i})")
+            return i
+            
+    return None
+
+def run_wakeword(threshold=0.5):
     """
     Continously listen for the 'Hey Aira' wake word.
     """
+    device_id = get_input_device()
+    if device_id is None:
+        print("Error: No audio input device found.")
+        return
+
     # Load openwakeword model
-    # Note: openwakeword has built-in models for common words.
-    # We will use the default 'alexa' or similar and map it to 'Aira' for now, 
-    # or look for a custom one if available.
     model = Model(wakeword_models=["alexa"], inference_framework="onnx")
     
     print(f"AIRA is listening for 'Hey Aira'...")
     
     def callback(indata, frames, time_info, status):
         if status:
-            print(status)
+            print(f"Status: {status}")
         
         # Openwakeword expects int16 audio
         audio_int16 = (indata * 32768).astype(np.int16).flatten()
@@ -41,17 +66,19 @@ def listen_for_wake_word(threshold=0.5):
                 time.sleep(1) # Cooldown
 
     try:
-        with sd.InputStream(samplerate=RATE, channels=CHANNELS, callback=callback, blocksize=CHUNK_SIZE):
+        with sd.InputStream(samplerate=RATE, 
+                            channels=CHANNELS, 
+                            callback=callback, 
+                            blocksize=CHUNK_SIZE,
+                            device=device_id):
             while True:
                 time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("\nStopping AIRA Wake Word listener...")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Wake Word Error: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AIRA Wake Word Listener")
     parser.add_argument("--threshold", type=float, default=0.5, help="Detection threshold (0.0 to 1.0)")
     args = parser.parse_args()
     
-    listen_for_wake_word(threshold=args.threshold)
+    run_wakeword(threshold=args.threshold)
