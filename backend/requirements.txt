@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+faster-whisper
+llama-cpp-python
+pyautogui
+openwakeword
+onnxruntime
+sounddevice
+webrtcvad
+requests
+aiohttp
+edge-tts
+pygame
