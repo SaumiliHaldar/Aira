@@ -1,4 +1,5 @@
 import os
+import io
 import asyncio
 import threading
 import wave
@@ -11,6 +12,7 @@ import pyautogui
 import edge_tts
 import pygame
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from faster_whisper import WhisperModel
 from llama_cpp import Llama
@@ -26,6 +28,14 @@ STT_MODEL_SIZE = "base"
 VOICE = "en-US-AriaNeural"
 
 app = FastAPI(title="Aira Voice Assistant")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Core Aira Engine ---
 
@@ -105,11 +115,14 @@ class AiraEngine:
     async def speak(self, text):
         print(f"Aira: {text}")
 
-        output_file = "response.mp3"
         communicate = edge_tts.Communicate(text, VOICE)
-        await communicate.save(output_file)
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
 
-        pygame.mixer.music.load(output_file)
+        fp = io.BytesIO(audio_data)
+        pygame.mixer.music.load(fp)
         pygame.mixer.music.play()
 
         while pygame.mixer.music.get_busy():
