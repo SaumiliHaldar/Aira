@@ -12,6 +12,10 @@ MODELS = {
     "alexa-wakeword": {
         "url": "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/alexa_v0.1.onnx",
         "path": os.path.join(MODELS_DIR, "alexa_v0.1.onnx")
+    },
+    "aira-wakeword": {
+        "url": "https://github.com/SaumiliHaldar/Aira-WakeWord/raw/main/aira.onnx", # Private repo link
+        "path": os.path.join(MODELS_DIR, "aira.onnx")
     }
 }
 
@@ -56,6 +60,12 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 
 for name, config in MODELS.items():
     print(f"\n--- Processing {name} ---")
+    if config["url"] is None:
+        if os.path.exists(config["path"]):
+            print(f"✔ Custom model exists at: {config['path']}")
+        else:
+            print(f"⚠ Custom model {name} not found. Please follow the instructions to generate it.")
+        continue
     download_model(config["url"], config["path"])
 
 print("\n🎯 All model checks complete.")

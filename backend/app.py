@@ -21,7 +21,7 @@ load_dotenv()
 
 # --- Configuration ---
 MODEL_PATH = "models/llama-3-8b-instruct.Q4_K_M.gguf"
-WAKEWORD_MODEL = "alexa"
+WAKEWORD_MODELS = ["aira", "alexa"]
 STT_MODEL_SIZE = "base"
 VOICE = "en-US-AriaNeural"
 
@@ -56,19 +56,25 @@ class AiraEngine:
         # TTS
         pygame.mixer.init()
 
-        # Wake word
-        wakeword_path = "models/alexa_v0.1.onnx"
-        if os.path.exists(wakeword_path):
-            self.oww_model = Model(
-                wakeword_models=[wakeword_path],
-                inference_framework="onnx"
-            )
-        else:
-            print("⚠ Wake word model not found.")
-            self.oww_model = Model(
-                wakeword_models=[WAKEWORD_MODEL],
-                inference_framework="onnx"
-            )
+        # Wake word loading
+        self.models_to_load = []
+        possible_models = {
+            "aira": "models/aira.onnx",
+            "alexa": "models/alexa_v0.1.onnx"
+        }
+
+        for name, path in possible_models.items():
+            if os.path.exists(path):
+                self.models_to_load.append(path)
+                print(f"✔ Loaded wake word: {name}")
+            else:
+                print(f"⚠ {name} model not found at {path}, using default if available.")
+                self.models_to_load.append(name) # Fallback to builtin if it exists in open-wakeword
+
+        self.oww_model = Model(
+            wakeword_models=self.models_to_load,
+            inference_framework="onnx"
+        )
 
     # ---------------- STT ----------------
     def transcribe(self, audio_path):
@@ -193,7 +199,7 @@ class AiraEngine:
 
     # ---------------- LISTEN LOOP ----------------
     def listen_loop(self):
-        print(f"Aira is active. Say '{WAKEWORD_MODEL}' to start.")
+        print(f"Aira is active. Say '{', '.join(WAKEWORD_MODELS)}' to start.")
 
         try:
             devices = sd.query_devices()
@@ -233,8 +239,9 @@ class AiraEngine:
         self.oww_model.predict(audio_frame)
 
         for mdl in self.oww_model.prediction_buffer.keys():
-            if list(self.oww_model.prediction_buffer[mdl])[-1] > 0.6:
-                print("Wake word detected!")
+            score = list(self.oww_model.prediction_buffer[mdl])[-1]
+            if score > 0.6:
+                print(f"Wake word '{mdl}' detected! (Score: {score:.2f})")
                 asyncio.run(self.run_logic())
 
     try:
